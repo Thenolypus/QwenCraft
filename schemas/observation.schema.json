@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qwencraft.local/schemas/observation.schema.json",
+  "title": "QwenCraftObservation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "inventory", "entities", "blocks_of_interest", "last_action", "memory"],
+  "properties": {
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "health", "hunger", "oxygen", "time", "minutes_to_night", "weather", "biome", "light", "danger_flags"],
+      "properties": {
+        "position": {
+          "type": "array",
+          "prefixItems": [{"type": "integer"}, {"type": "integer"}, {"type": "integer"}],
+          "items": false,
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "health": {"type": "number", "minimum": 0, "maximum": 20},
+        "hunger": {"type": "number", "minimum": 0, "maximum": 20},
+        "oxygen": {"type": "number", "minimum": 0, "maximum": 20},
+        "time": {"type": "string", "enum": ["day", "sunset", "night", "sunrise"]},
+        "minutes_to_night": {"type": "number"},
+        "weather": {"type": "string", "enum": ["clear", "rain", "thunder"]},
+        "biome": {"type": "string"},
+        "light": {"type": "integer", "minimum": 0, "maximum": 15},
+        "danger_flags": {
+          "type": "array",
+          "items": {"type": "string"},
+          "maxItems": 10
+        }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["held", "items", "free_slots", "armor"],
+      "properties": {
+        "held": {"type": ["string", "null"]},
+        "items": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        },
+        "free_slots": {"type": "integer", "minimum": 0, "maximum": 36},
+        "armor": {
+          "type": "array",
+          "items": {"type": ["string", "null"]},
+          "minItems": 4,
+          "maxItems": 4
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "dist", "dir", "hostile"],
+        "properties": {
+          "type": {"type": "string"},
+          "dist": {"type": "number", "minimum": 0},
+          "dir": {"type": "string", "enum": ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]},
+          "hostile": {"type": "boolean"}
+        }
+      }
+    },
+    "blocks_of_interest": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "nearest_dist", "pos", "count_in_range"],
+        "properties": {
+          "type": {"type": "string"},
+          "nearest_dist": {"type": "number", "minimum": 0},
+          "pos": {
+            "type": "array",
+            "prefixItems": [{"type": "integer"}, {"type": "integer"}, {"type": "integer"}],
+            "items": false,
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "count_in_range": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "last_action": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["tool", "args", "status", "detail"],
+      "properties": {
+        "tool": {"type": "string"},
+        "args": {"type": "object"},
+        "status": {"type": "string", "enum": ["success", "failed", "interrupted"]},
+        "detail": {"type": "string"}
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goal", "pinned", "recent_events"],
+      "properties": {
+        "goal": {"type": "string"},
+        "pinned": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {"type": "string"},
+              {"type": "number"},
+              {"type": "boolean"},
+              {"type": "null"},
+              {"type": "array"},
+              {"type": "object"}
+            ]
+          },
+          "maxProperties": 10
+        },
+        "recent_events": {
+          "type": "array",
+          "items": {"type": "string"},
+          "maxItems": 15
+        },
+        "longterm": {
+          "type": ["array", "null"],
+          "items": {"type": "string"},
+          "maxItems": 5
+        },
+        "pending_craft": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["item", "count", "reason"],
+          "properties": {
+            "item": {"type": "string"},
+            "count": {"type": "integer", "minimum": 1, "maximum": 64},
+            "reason": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

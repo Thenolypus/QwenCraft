@@ -1,3 +1,7 @@
+# Agents
+AGENTS.md
+CLAUDE.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -206,6 +210,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# QwenCraft runtime state
+state/
+
 # PyPI configuration file
 .pypirc
 
@@ -216,3 +223,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# QwenCraft local outputs
+node_modules/
+.uv-cache/
+logs/*.jsonl
+logs/*.jsonl.gz
+server-data/
+*.tgz
+bot/coverage/
+bot/.nyc_output/
+.DS_Store
