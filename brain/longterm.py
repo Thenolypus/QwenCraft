@@ -11,6 +11,14 @@ from typing import Any, Callable
 
 Record = dict[str, Any]
 
+# Optimus-1 style split: stable facts/lessons vs episodic experience. Category
+# is derived from "type" (never stored), so old records migrate for free.
+KNOWLEDGE_TYPES = {"fact", "lesson"}
+
+
+def category_for_record(record: Record) -> str:
+    return "knowledge" if record.get("type") in KNOWLEDGE_TYPES else "experience"
+
 
 def atomic_write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -28,10 +36,15 @@ def _distance(a: list[float] | tuple[float, float, float], b: list[float] | tupl
 
 
 class LongTermStore:
-    def __init__(self, path: Path, clock: Callable[[], float] | None = None, max_records: int = 200) -> None:
+    def __init__(
+        self,
+        path: Path,
+        clock: Callable[[], float] | None = None,
+        max_records_per_category: int = 100,
+    ) -> None:
         self.path = path
         self.clock = clock or time.time
-        self.max_records = max_records
+        self.max_records_per_category = max_records_per_category
         self.records: list[Record] = []
         self._load()
 
@@ -44,6 +57,14 @@ class LongTermStore:
             self.records = [dict(record) for record in data]
         else:
             self.records = []
+        # Transparent migration: a legacy single-cap file (or one written under
+        # a smaller per-category cap) may exceed the current per-category caps;
+        # trim it down using the same importance+recency eviction as upsert.
+        before = len(self.records)
+        self._evict_category("knowledge")
+        self._evict_category("experience")
+        if len(self.records) != before:
+            self._write()
 
     def upsert(self, record: Record) -> Record:
         now = self.clock()
@@ -70,23 +91,26 @@ class LongTermStore:
         else:
             self.records.append(normalized)
 
-        self._evict()
+        self._evict_category(category_for_record(normalized))
         self._write()
         return normalized
 
     def retrieve(self, position: list[float] | tuple[float, float, float], goal_text: str, k: int = 5) -> list[Record]:
+        """Top-k retrieval, split proportionally across categories so a
+        prompt never loses one memory kind entirely to the other."""
         goal_tokens = _tokens(goal_text)
-        scored: list[tuple[float, float, Record]] = []
-        for record in self.records:
-            importance = float(record.get("importance", 1))
-            if record.get("type") == "place" and record.get("pos") is not None:
-                score = importance / (1 + _distance(position, record["pos"]) / 100)
-            else:
-                record_tokens = _tokens(f"{record.get('key', '')} {record.get('value', '')}")
-                score = float(len(goal_tokens & record_tokens))
-            scored.append((score, float(record.get("last_used_ts", 0)), record))
+        experience = [record for record in self.records if category_for_record(record) == "experience"]
+        knowledge = [record for record in self.records if category_for_record(record) == "knowledge"]
+        # Proportional quotas; a sparse category's unused share is backfilled
+        # by the other so the prompt still receives up to k entries.
+        quota_experience = (k + 1) // 2
+        quota_knowledge = k // 2
+        spare_from_knowledge = max(0, quota_knowledge - len(knowledge))
+        spare_from_experience = max(0, quota_experience - len(experience))
+        selected = self._top_scored(
+            experience, position, goal_tokens, quota_experience + spare_from_knowledge
+        ) + self._top_scored(knowledge, position, goal_tokens, quota_knowledge + spare_from_experience)
 
-        selected = [record for _, _, record in sorted(scored, key=lambda item: (item[0], item[1]), reverse=True)[:k]]
         if selected:
             now = self.clock()
             selected_ids = {record.get("id") for record in selected}
@@ -96,9 +120,30 @@ class LongTermStore:
             self._write()
         return [dict(record) for record in selected]
 
-    def _evict(self) -> None:
-        while len(self.records) > self.max_records:
-            victim = min(range(len(self.records)), key=lambda index: (self.records[index].get("importance", 1), self.records[index].get("last_used_ts", 0)))
+    def _top_scored(
+        self,
+        records: list[Record],
+        position: list[float] | tuple[float, float, float],
+        goal_tokens: set[str],
+        k: int,
+    ) -> list[Record]:
+        if k <= 0:
+            return []
+        scored: list[tuple[float, float, Record]] = []
+        for record in records:
+            importance = float(record.get("importance", 1))
+            if record.get("type") == "place" and record.get("pos") is not None:
+                score = importance / (1 + _distance(position, record["pos"]) / 100)
+            else:
+                record_tokens = _tokens(f"{record.get('key', '')} {record.get('value', '')}")
+                score = float(len(goal_tokens & record_tokens))
+            scored.append((score, float(record.get("last_used_ts", 0)), record))
+        return [record for _, _, record in sorted(scored, key=lambda item: (item[0], item[1]), reverse=True)[:k]]
+
+    def _evict_category(self, category: str) -> None:
+        while sum(1 for record in self.records if category_for_record(record) == category) > self.max_records_per_category:
+            indices = [index for index, record in enumerate(self.records) if category_for_record(record) == category]
+            victim = min(indices, key=lambda index: (self.records[index].get("importance", 1), self.records[index].get("last_used_ts", 0)))
             self.records.pop(victim)
 
     def _write(self) -> None:

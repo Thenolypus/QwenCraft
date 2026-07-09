@@ -8,8 +8,15 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from openai import APIConnectionError, AsyncOpenAI
 
-from .models import Config, Observation, ToolCall
-from .prompts import build_user_prompt, system_prompt_with_history
+from .models import Config, Observation, ToolCall, ToolResult, canonical_args
+from .prompts import (
+    CRITIC_SYSTEM_PROMPT,
+    apply_prompt_extras,
+    build_critic_prompt,
+    build_user_prompt,
+    prompt_extras,
+    system_prompt_with_history,
+)
 
 
 class ToolParseError(ValueError):
@@ -100,6 +107,23 @@ def _message_retry_content(message: Any) -> str:
     return f"{content}\nTool calls: {json.dumps(serialized, ensure_ascii=True, default=str)}".strip()
 
 
+def parse_critic_response(text: str) -> dict[str, str]:
+    """Tolerant parse of the critic's VERDICT/WHY/LESSON lines; falls back to
+    treating the raw text as the explanation if the model does not follow
+    the requested structure."""
+
+    def _field(name: str) -> str:
+        match = re.search(rf"^{name}:\s*(.+)$", text, flags=re.IGNORECASE | re.MULTILINE)
+        return match.group(1).strip() if match else ""
+
+    why = _field("WHY") or text.strip()[:200]
+    return {
+        "verdict": _field("VERDICT") or "failed",
+        "explanation": why,
+        "lesson": _field("LESSON") or why,
+    }
+
+
 class LLMPlanner:
     def __init__(self, config: Config, tools: list[dict[str, Any]], history_summary: str = "") -> None:
         self.config = config
@@ -117,14 +141,22 @@ class LLMPlanner:
         stage: str = "unknown",
         next_milestone: str = "unknown",
         hint: str = "",
+        blocked: list[dict[str, Any]] | None = None,
+        notice: str | None = None,
     ) -> tuple[ToolCall, Any]:
+        user_prompt = apply_prompt_extras(
+            build_user_prompt(observation, observation.memory.goal, stage, next_milestone, hint),
+            prompt_extras(notice, [item["message"] for item in blocked or []]),
+        )
+        banned_keys = {(item["tool"], canonical_args(item["args"])) for item in blocked or []}
+
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt_with_history(self.history_summary)},
-            {"role": "user", "content": build_user_prompt(observation, observation.memory.goal, stage, next_milestone, hint)},
+            {"role": "user", "content": user_prompt},
         ]
         raw = await self._completion(messages)
         try:
-            return self._parse_and_validate(raw.choices[0].message), raw.model_dump(mode="json")
+            return self._parse_validate_and_check(raw.choices[0].message, banned_keys), raw.model_dump(mode="json")
         except Exception as first_error:
             messages.append({"role": "assistant", "content": _message_retry_content(raw.choices[0].message)})
             messages.append(
@@ -135,7 +167,7 @@ class LLMPlanner:
             )
             retry = await self._completion(messages)
             try:
-                return self._parse_and_validate(retry.choices[0].message), retry.model_dump(mode="json")
+                return self._parse_validate_and_check(retry.choices[0].message, banned_keys), retry.model_dump(mode="json")
             except Exception as second_error:
                 fallback = {
                     "first_error": str(first_error),
@@ -152,6 +184,12 @@ class LLMPlanner:
         errors = sorted(validator.iter_errors(call.args), key=lambda err: list(err.path))
         if errors:
             raise ToolParseError(f"{call.tool} args invalid: {errors[0].message}")
+        return call
+
+    def _parse_validate_and_check(self, message: Any, banned_keys: set[tuple[str, str]]) -> ToolCall:
+        call = self._parse_and_validate(message)
+        if call.key() in banned_keys:
+            raise ToolParseError(f"{call.tool} is currently blocked; choose a different tool, target, or approach.")
         return call
 
     async def summarize_events(self, events: list[str]) -> str:
@@ -185,6 +223,20 @@ class LLMPlanner:
             extra_body={"chat_template_kwargs": {"enable_thinking": self.config.enable_thinking}},
         )
         return (response.choices[0].message.content or "").strip()
+
+    async def critic(self, observation: Observation, goal: str, tool_call: ToolCall, result: ToolResult) -> dict[str, str]:
+        """DEPS-style failure explanation: a plain completion (no tools=) that
+        turns one failed tool result into a short verdict/why/lesson."""
+        response = await self.client.chat.completions.create(
+            model=self.config.llm_model,
+            messages=[
+                {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
+                {"role": "user", "content": build_critic_prompt(observation, goal, tool_call, result)},
+            ],
+            temperature=0,
+            extra_body={"chat_template_kwargs": {"enable_thinking": self.config.enable_thinking}},
+        )
+        return parse_critic_response((response.choices[0].message.content or "").strip())
 
     async def _completion(self, messages: list[dict[str, str]]) -> Any:
         try:

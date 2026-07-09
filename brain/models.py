@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Literal
@@ -9,7 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 Direction = Literal["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-ToolStatus = Literal["success", "failed", "interrupted"]
+# connection_lost: brain-side hardening status for a decision whose dispatch
+# never got a tool_result because the bot process/connection died mid-call.
+ToolStatus = Literal["success", "failed", "interrupted", "connection_lost"]
+
+
+def canonical_args(args: dict[str, Any]) -> str:
+    """Stable JSON form of a tool call's args, used as part of its identity
+    for consecutive-failure tracking (the loop-breaker)."""
+    return json.dumps(args, sort_keys=True, default=str)
 
 
 class Config(BaseModel):
@@ -94,6 +103,10 @@ class Observation(BaseModel):
 class ToolCall(BaseModel):
     tool: str
     args: dict[str, Any] = Field(default_factory=dict)
+
+    def key(self) -> tuple[str, str]:
+        """Identity used to detect repeated identical calls (loop-breaker)."""
+        return (self.tool, canonical_args(self.args))
 
 
 class ToolResult(BaseModel):

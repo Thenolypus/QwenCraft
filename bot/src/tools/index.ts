@@ -10,6 +10,7 @@ import { fleeTool } from "./flee";
 import { gotoTool } from "./goto";
 import { mineBlockTool } from "./mine_block";
 import { noteTool } from "./note";
+import { obtainItemTool } from "./obtain_item";
 import { placeBlockTool } from "./place_block";
 import { setGoalTool } from "./set_goal";
 import { sleepTool } from "./sleep";
@@ -24,6 +25,7 @@ export const toolRegistry: Record<string, ToolHandler> = {
   mine_block: mineBlockTool,
   craft: craftTool,
   smelt: smeltTool,
+  obtain_item: obtainItemTool,
   place_block: placeBlockTool,
   eat: eatTool,
   equip: equipTool,
@@ -36,6 +38,9 @@ export const toolRegistry: Record<string, ToolHandler> = {
 };
 
 export function timeoutSecondsForTool(tool: string): number {
+  // obtain_item chains up to ~25 primitive steps (each up to a mine_block-sized 120s)
+  // as one dispatched call, so it needs a much larger ceiling than a single tool.
+  if (tool === "obtain_item") return 600;
   if (["goto", "explore", "mine_block"].includes(tool)) return 120;
   return 60;
 }

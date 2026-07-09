@@ -217,3 +217,19 @@ Added brain-owned `memory.pending_craft` so failed crafts remain an explicit sho
 Extended the prompt to treat pending crafts as the immediate safe craft subgoal, and persisted the breadcrumb with brain state.
 Generalized craft recipe variant scoring beyond wood: stone-material recipes now cross-check inventory families and default to `cobblestone` before deepslate/blackstone when there is no inventory signal.
 Verified `npm run build`, `npm test` (10), `UV_CACHE_DIR=.uv-cache uv run pytest` (30), and `UV_CACHE_DIR=.uv-cache uv run python -m py_compile brain/*.py eval/run_episode.py`.
+
+## [2026-07-06] plan | Brainstorm → goals v2.2–v4: Odyssey port, critic, SFT track
+
+Reviewed the local Odyssey clone for portable pieces (Claude). Decision: port the recursive `obtainItem` resolver as a bot tool backed by live minecraft-data 1.21 — Odyssey's `pre_item`/`pre_tool`/`pre_smelt` JSONs are stale 1.19 duplicates of data mineflayer already has; vendor only `func`/`pre_collect`/`map_name` routing knowledge.
+Rewrote goals.md: v2.2 SFT-ready decision records (start first — every run without them is lost training data), v2.3 `obtain_item` port, v2.4 DEPS failure critic + Optimus-1 knowledge/experience memory split, v3 role-based two-speed planning, v4 SFT (LLaMA-Rider own-trajectories + Odyssey MineMA knowledge injection adapted to Qwen).
+Rejected Odyssey's full planner-actor-critic: their actor free-writes JS and needed a fine-tuned MineMA-8B to work; our constrained JSON tool calls already fill the actor role for a 9B. Adopt only the critic and a slow planner role.
+Clarified: llama-server chat completions are stateless (no cross-role memory bleed); only prompt-cache warmth is affected by role swaps — solved later with `-np 2/3` and a larger `-c`.
+Next: still owe the live heap_mb verification from the 2026-07-05 OOM fixes, then implement v2.2 decision records.
+
+## [2026-07-07] orchestrate | Crash diagnosis + v2.2 records, v2.3 obtain_item, v2.4 critic (Sonnet agents)
+
+Diagnosed the latest crash (episode_20260705T201443Z): bot-side Node heap OOM, not the brain — the LLM re-issues identical failing `mine_block` calls (no consecutive-failure guard existed anywhere) while `interruptible()` abandoned rather than cancelled the underlying collectBlock promises, leaking A* state per retry.
+Fixes: bot `interruptible()` now calls `collectBlock.cancelTask()` and drains abandoned promises (3s grace, warning logged on overrun); brain `FailureTracker` blocks an identical (tool,args) call for 300s after 2 consecutive failures and states the block in the prompt, with the retry path rejecting banned calls.
+Landed v2.2 decision records (`logs/decisions_*.jsonl` + `eval/export_sft.py`, byte-identical prompt re-render incl. injected extras), v2.3 `obtain_item` (recursive resolver on minecraft-data 1.21 + vendored Odyssey func/pre_collect/map_name/pre_smelt — minecraft-data ships no smelting data, goals.md corrected; whitelist bypass for resolver-targeted mining; 600s budget both sides), v2.4 failure critic (one-shot DEPS explanation → next prompt, lesson → longterm) and knowledge/experience memory split (100/100 caps, category eviction, transparent migration).
+Verified: `npm run build`, `npm test` (19), `uv run pytest` (74), py_compile. Not live-verified: heap_mb flatness across forced mine_block timeouts, obtain_item chains on a real server, critic quality with the real LLM.
+Next: run a live episode — watch `heap_mb` and `tool abort drain timed out` lines, look for BLOCKED/CRITIC lines in prompts, and export the episode's decisions JSONL as the first SFT sample.

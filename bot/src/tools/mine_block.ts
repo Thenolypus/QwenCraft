@@ -13,7 +13,7 @@ export async function mineBlockTool(args: Record<string, unknown>, context: Tool
   try {
     type = String(args.type);
     count = Number(args.count);
-    if (!matchesWhitelist(type, context.config.block_whitelist)) {
+    if (!context.resolverBypassWhitelist && !matchesWhitelist(type, context.config.block_whitelist)) {
       return failed(`mine_block failed: ${type} is not in block whitelist`);
     }
     const blocks = findBlocksByName(context.bot, type, context.config.scan_radius_blocks, count + 8);

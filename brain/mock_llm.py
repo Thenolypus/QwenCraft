@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import Observation, ToolCall
+from .models import Observation, ToolCall, ToolResult
 
 
 class MockPolicy:
@@ -18,6 +18,8 @@ class MockPolicy:
         stage: str = "unknown",
         next_milestone: str = "unknown",
         hint: str = "",
+        blocked: list[dict[str, Any]] | None = None,
+        notice: str | None = None,
     ) -> tuple[ToolCall, dict[str, Any]]:
         inv = observation.inventory.items
         pinned = observation.memory.pinned
@@ -62,6 +64,13 @@ class MockPolicy:
 
     async def compress_history(self, text: str) -> str:
         return text[-600:]
+
+    async def critic(self, observation: Observation, goal: str, tool_call: ToolCall, result: ToolResult) -> dict[str, str]:
+        return {
+            "verdict": "mock_failure",
+            "explanation": f"mock critic: {tool_call.tool} failed ({result.detail})",
+            "lesson": f"avoid repeating {tool_call.tool} with the same args right after a failure",
+        }
 
     def _call(self, tool: str, args: dict[str, Any]) -> tuple[ToolCall, dict[str, Any]]:
         return ToolCall(tool=tool, args=args), {"mock": True, "tool": tool, "args": args}

@@ -1,7 +1,8 @@
 import { Vec3 } from "vec3";
 import { Movements, goals } from "mineflayer-pathfinder";
 import { ToolContext, ToolResult } from "../types";
-import { assertNotAborted, findAnyInventoryItem, findInventoryItem, isAbortError, normalizeError } from "../utils";
+import { assertNotAborted, delay, findAnyInventoryItem, findInventoryItem, isAbortError, normalizeError } from "../utils";
+import { logInfo } from "../logger";
 
 const { GoalNear, GoalBlock } = goals;
 
@@ -42,26 +43,54 @@ export function configureMovements(context: ToolContext): any {
   return movements;
 }
 
+// interruptible() used to be abandon-based: on abort it stopped visible bot behavior and
+// settled our wrapper promise immediately, but walked away from `promise` itself. That
+// promise (a pathfinder goto or a collectBlock.collect) keeps running underneath, pinning
+// its Movements/targets/block state until it eventually settles on its own (or never does),
+// and a fast-retrying caller can pile up more of these across dispatches. Cancel the
+// collectBlock task explicitly and await `promise`'s actual settlement, bounded by a short
+// grace period, before handing control back.
+const DRAIN_GRACE_MS = 3000;
+
+async function drainAbandoned(context: ToolContext, promise: Promise<unknown>): Promise<void> {
+  const cancelled = context.bot.collectBlock?.cancelTask?.();
+  const pending = [promise, cancelled].filter((candidate): candidate is Promise<unknown> => Boolean(candidate));
+  const drained = Promise.allSettled(pending).then(() => "drained" as const);
+  const timedOut = delay(DRAIN_GRACE_MS).then(() => "timed_out" as const);
+  const outcome = await Promise.race([drained, timedOut]);
+  if (outcome === "timed_out") {
+    logInfo("tool abort drain timed out", {
+      reason: String(context.signal.reason ?? "interrupted"),
+      grace_ms: DRAIN_GRACE_MS,
+      heap_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+    });
+  }
+}
+
 async function interruptible<T>(context: ToolContext, promise: Promise<T>): Promise<T> {
   assertNotAborted(context.signal);
+  let aborting = false;
   return await new Promise<T>((resolve, reject) => {
     const onAbort = (): void => {
+      aborting = true;
       context.bot.pathfinder?.stop?.();
       // stop() is graceful and leaves an in-flight path computation running to its
       // think budget; setGoal(null) drops the A* state immediately.
       context.bot.pathfinder?.setGoal?.(null);
       context.bot.pvp?.stop?.();
-      reject(new Error(String(context.signal.reason ?? "interrupted")));
+      void drainAbandoned(context, promise).then(() => {
+        reject(new Error(String(context.signal.reason ?? "interrupted")));
+      });
     };
     context.signal.addEventListener("abort", onAbort, { once: true });
     promise.then(
       (value) => {
         context.signal.removeEventListener("abort", onAbort);
-        resolve(value);
+        if (!aborting) resolve(value);
       },
       (error) => {
         context.signal.removeEventListener("abort", onAbort);
-        reject(error);
+        if (!aborting) reject(error);
       }
     );
   });

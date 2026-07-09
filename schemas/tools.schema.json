@@ -144,6 +144,22 @@
     {
       "type": "function",
       "function": {
+        "name": "obtain_item",
+        "description": "Get a quantity of an item by resolving its full prerequisite chain automatically (mining, crafting, smelting, or killing as needed, including tools and intermediate materials). Prefer this over chaining mine_block/craft/smelt/attack yourself whenever the item has prerequisites. Fails informatively with what was obtained and which step blocked if the chain cannot complete.",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["item", "count"],
+          "properties": {
+            "item": {"type": "string"},
+            "count": {"type": "integer", "minimum": 1, "maximum": 64}
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
         "name": "place_block",
         "description": "Place a named block at an exact coordinate. Fails if the block is missing, target is occupied, or no adjacent support face exists.",
         "parameters": {

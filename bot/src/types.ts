@@ -52,6 +52,9 @@ export interface ToolContext {
   emitEvent: (name: string, data?: Record<string, unknown>) => void;
   recentEvents: string[];
   stopCurrent: (reason?: string) => void;
+  // Set by obtain_item when it invokes mine_block for an explicitly resolved target:
+  // block_whitelist governs the LLM's observation scanning, not code-directed mining.
+  resolverBypassWhitelist?: boolean;
 }
 
 export type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>;

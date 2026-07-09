@@ -2,7 +2,7 @@ import { ToolContext, ToolResult } from "../types";
 import { findAnyInventoryItem, findInventoryItem, itemCount } from "../utils";
 import { findBlockMatching, itemDefinition, placeHeldAt, resultFromError, success } from "./helpers";
 
-const fuelPriority = ["coal", "oak_planks", "spruce_planks", "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log"];
+export const fuelPriority = ["coal", "oak_planks", "spruce_planks", "birch_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "oak_log", "spruce_log", "birch_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log"];
 
 async function furnaceBlock(context: ToolContext): Promise<any | null> {
   const nearby = findBlockMatching(context.bot, (block) => block.name === "furnace", 16, 1);

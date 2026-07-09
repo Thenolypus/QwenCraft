@@ -22,5 +22,6 @@ block_whitelist:
   - "*_bed"
   - water
   - lava
+  - wheat
 viewer_enabled: true
 episode_time_limit_minutes: 25
