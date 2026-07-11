@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
+import { Vec3 } from "vec3";
 import { obtainItemTool } from "../src/tools/obtain_item";
 import { loadOdysseyData } from "../src/tools/odyssey_data";
 
 vi.mock("../src/tools/odyssey_data", () => ({
   loadOdysseyData: vi.fn()
 }));
+
+// The crop-harvest path walks to each crop and mining configures real pathfinder
+// Movements; both need a real world, so stub those two and keep every other
+// helper real.
+vi.mock("../src/tools/helpers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/tools/helpers")>();
+  return { ...actual, gotoNear: vi.fn(async () => {}), configureMovements: vi.fn(() => ({})) };
+});
 
 const mockedLoadOdysseyData = vi.mocked(loadOdysseyData);
 
@@ -20,6 +29,7 @@ interface FakeItemDef {
 interface RecipeDef {
   needs: Record<string, number>;
   produces?: number;
+  table?: boolean; // recipe only available when a crafting table is provided
 }
 
 /**
@@ -34,6 +44,7 @@ function makeBot(options: {
   initialInventory?: Record<string, number>;
   recipes?: Record<string, RecipeDef>;
   findBlocksByType?: Record<string, number>; // blockName -> how many positions findBlocks reports
+  blockAges?: Record<string, number>; // blockName -> crop age reported by getProperties()
   collect?: (blockName: string) => Promise<void> | void;
   nearbyEntities?: Array<{ id: number; name: string }>;
 }): any {
@@ -71,8 +82,8 @@ function makeBot(options: {
 
   const bot: any = {
     version: "1.21.11",
-    entity: { position: { offset: () => ({ floored: () => ({}) }), distanceTo: () => 5 } },
-    entities: Object.fromEntries((options.nearbyEntities ?? []).map((entity) => [entity.id, { ...entity, position: {} }])),
+    entity: { position: new Vec3(0.5, 64, 0.5) },
+    entities: Object.fromEntries((options.nearbyEntities ?? []).map((entity) => [entity.id, { ...entity, position: new Vec3(1, 64, 1) }])),
     health: 20,
     registry: { items: itemsById, itemsByName, blocksByName, entitiesByName },
     inventory: { items: itemsArray },
@@ -84,31 +95,44 @@ function makeBot(options: {
       for (const [need, needCount] of Object.entries(def.needs)) inventory[need] = (inventory[need] ?? 0) - needCount * count;
       inventory[name] = (inventory[name] ?? 0) + count * (def.produces ?? 1);
     }),
-    recipesFor: (itemId: number, _meta: null, count: number) => {
+    recipesFor: (itemId: number, _meta: null, count: number, table: any) => {
       const name = Object.values(itemsByName).find((item) => item.id === itemId)?.name;
       const def = name ? recipes[name] : undefined;
       if (!name || !def) return [];
+      if (def.table && !table) return [];
       const satisfied = Object.entries(def.needs).every(([need, needCount]) => (inventory[need] ?? 0) >= needCount * count);
       return satisfied ? [{ __def: def, __name: name, delta: recipeDelta(name, def) }] : [];
     },
-    recipesAll: (itemId: number) => {
+    recipesAll: (itemId: number, _meta: null, table: any) => {
       const name = Object.values(itemsByName).find((item) => item.id === itemId)?.name;
       const def = name ? recipes[name] : undefined;
       if (!name || !def) return [];
+      if (def.table && !table) return [];
       return [{ __def: def, __name: name, delta: recipeDelta(name, def) }];
     },
     findBlocks: ({ matching, count }: { matching: any; count: number }) => {
       if (typeof matching === "function") return []; // no crafting_table/furnace ever nearby in these tests
       const resolvedName = Object.keys(blocksByName).find((name) => blocksByName[name].id === matching);
       const available = resolvedName ? (options.findBlocksByType?.[resolvedName] ?? 0) : 0;
-      return Array.from({ length: Math.min(available, count) }, (_, index) => ({ x: index, y: 0, z: 0, __blockName: resolvedName }));
+      return Array.from({ length: Math.min(available, count) }, (_, index) => Object.assign(new Vec3(index, 0, 0), { __blockName: resolvedName }));
     },
-    blockAt: (pos: any) => ({ position: pos, name: pos.__blockName ?? "block", __blockName: pos.__blockName }),
+    blockAt: (pos: any) => ({
+      position: pos,
+      name: pos.__blockName ?? "block",
+      __blockName: pos.__blockName,
+      boundingBox: "block",
+      getProperties: () => (options.blockAges?.[pos.__blockName] === undefined ? {} : { age: options.blockAges[pos.__blockName] })
+    }),
     collectBlock: {
       collect: vi.fn(async (block: any) => {
         await options.collect?.(block.__blockName);
       })
     },
+    dig: vi.fn(async (block: any) => {
+      await options.collect?.(block.__blockName ?? block.name);
+    }),
+    activateBlock: vi.fn(async () => {}),
+    placeBlock: vi.fn(async () => {}),
     pvp: { attack: vi.fn(), stop: vi.fn() },
     pathfinder: { stop: vi.fn(), setGoal: vi.fn() }
   };
@@ -203,6 +227,83 @@ describe("obtainItemTool", () => {
     expect(result.detail).toContain("recursion depth cap (6) reached");
   });
 
+  it("resolves a crafting table before crafting a table-only recipe", async () => {
+    const bot = makeBot({
+      items: [
+        { id: 1, name: "wooden_pickaxe" },
+        { id: 2, name: "oak_planks" },
+        { id: 3, name: "stick" },
+        { id: 4, name: "crafting_table" }
+      ],
+      blocks: { crafting_table: {} },
+      initialInventory: { oak_planks: 10, stick: 4 },
+      recipes: {
+        wooden_pickaxe: { needs: { oak_planks: 3, stick: 2 }, table: true },
+        crafting_table: { needs: { oak_planks: 4 } }
+      }
+    });
+    mockedLoadOdysseyData.mockReturnValue({
+      func: { wooden_pickaxe: "craft", crafting_table: "craft" },
+      preCollect: {},
+      mapName: {},
+      preSmelt: {}
+    });
+    const context: any = { bot, config: { entity_radius_blocks: 24, scan_radius_blocks: 32, block_whitelist: [] }, signal: new AbortController().signal };
+
+    const result = await obtainItemTool({ item: "wooden_pickaxe", count: 1 }, context);
+
+    expect(result.status).toBe("success");
+    expect(result.detail).toContain("obtained 1 wooden_pickaxe");
+    // The table was crafted as a prerequisite (consuming 4 planks), then the
+    // pickaxe recipe consumed 3 planks and 2 sticks on the placed table.
+    expect(bot.__inventory.wooden_pickaxe).toBe(1);
+    expect(bot.__inventory.oak_planks).toBe(3);
+  });
+
+  it("falls back from a cyclic craft route to mining the crop block (wheat <-> hay_block)", async () => {
+    const bot = makeBot({
+      items: [
+        { id: 1, name: "wheat" },
+        { id: 2, name: "hay_block" }
+      ],
+      blocks: { wheat: {} },
+      recipes: {
+        wheat: { needs: { hay_block: 1 }, produces: 9 },
+        hay_block: { needs: { wheat: 9 } }
+      },
+      findBlocksByType: { wheat: 3 },
+      blockAges: { wheat: 7 },
+      collect: (blockName) => {
+        if (blockName === "wheat") bot.__inventory.wheat = (bot.__inventory.wheat ?? 0) + 1;
+      }
+    });
+    // No "wheat" func entry: the route falls through to the hay_block recipe, which
+    // needs wheat again — the resolver must survive the cycle by mining the crop.
+    mockedLoadOdysseyData.mockReturnValue({ func: { hay_block: "craft" }, preCollect: {}, mapName: {}, preSmelt: {} });
+    const context: any = { bot, config: { entity_radius_blocks: 24, scan_radius_blocks: 32, block_whitelist: [] }, signal: new AbortController().signal };
+
+    const result = await obtainItemTool({ item: "wheat", count: 2 }, context);
+
+    expect(result.status).toBe("success");
+    expect(result.detail).toContain("obtained 2 wheat");
+  });
+
+  it("does not harvest immature crops and reports why", async () => {
+    const bot = makeBot({
+      items: [{ id: 1, name: "wheat" }],
+      blocks: { wheat: {} },
+      findBlocksByType: { wheat: 4 },
+      blockAges: { wheat: 3 }
+    });
+    mockedLoadOdysseyData.mockReturnValue({ func: { wheat: "mine" }, preCollect: {}, mapName: { wheat: ["wheat"] }, preSmelt: {} });
+    const context: any = { bot, config: { entity_radius_blocks: 24, scan_radius_blocks: 32, block_whitelist: [] }, signal: new AbortController().signal };
+
+    const result = await obtainItemTool({ item: "wheat", count: 1 }, context);
+
+    expect(result.status).toBe("failed");
+    expect(result.detail).toContain("only immature wheat");
+  });
+
   it("returns interrupted with partial progress when the abort signal fires mid-chain", async () => {
     let collectCalls = 0;
     const controller = new AbortController();
@@ -247,13 +348,23 @@ describe("loadOdysseyData filtering (real module, not mocked)", () => {
 
     const bot: any = {
       registry: {
-        itemsByName: { stick: { id: 1, name: "stick" }, oak_planks: { id: 2, name: "oak_planks" }, string: { id: 3, name: "string" } },
-        blocksByName: { stone: { id: 100, name: "stone" } },
+        itemsByName: {
+          stick: { id: 1, name: "stick" },
+          oak_planks: { id: 2, name: "oak_planks" },
+          string: { id: 3, name: "string" },
+          wheat: { id: 4, name: "wheat" }
+        },
+        blocksByName: { stone: { id: 100, name: "stone" }, wheat: { id: 101, name: "wheat" } },
         entitiesByName: { spider: { name: "spider" } }
       }
     };
 
     const data = realLoad(bot);
+
+    // Crop items route straight to mining their crop block (wheat's only recipe is
+    // the hay_block cycle, so a missing func entry would dead-end the resolver).
+    expect(data.func.wheat).toBe("mine");
+    expect(data.mapName.wheat).toEqual(["wheat"]);
 
     // "stick" is a real func.json entry and is known to this minimal registry, so it survives.
     expect(data.func.stick).toBeDefined();

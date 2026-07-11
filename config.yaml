@@ -14,14 +14,20 @@ entity_radius_blocks: 24
 block_whitelist:
   - "*_log"
   - stone
-  - coal_ore
-  - iron_ore
+  - "*_ore"
   - crafting_table
+  - dirt
   - furnace
   - chest
   - "*_bed"
   - water
   - lava
   - wheat
+  - carrots
+  - potatoes
+  - beetroots
+  - sweet_berry_bush
+  - melon
+  - hay_block
 viewer_enabled: true
 episode_time_limit_minutes: 25

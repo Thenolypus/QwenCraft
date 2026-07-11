@@ -16,6 +16,8 @@ export function installReflexes(options: ReflexOptions): void {
   const { bot, config, isToolRunning, currentToolName, interruptCurrent, emitEvent } = options;
   let emergencyRunning = false;
   let nextEmergencyAt = 0;
+  let keepAwayRunning = false;
+  let nextKeepAwayAt = 0;
   let autoEatRunning = false;
   let nextAutoEatAt = 0;
   let lastHungerEventAt = 0;
@@ -99,6 +101,27 @@ export function installReflexes(options: ReflexOptions): void {
         type: nearestHostile.entity.name ?? nearestHostile.entity.type,
         dist: Number(nearestHostile.dist.toFixed(1))
       });
+    }
+
+    // Between tool calls the bot stands still while the planner thinks, letting
+    // melee mobs walk up and land free hits. Only when idle (so it can never
+    // fight a running tool), step away from a hostile in contact range.
+    if (nearestHostile && nearestHostile.dist <= 4 && !isToolRunning() && !emergencyRunning && !keepAwayRunning && now >= nextKeepAwayAt) {
+      keepAwayRunning = true;
+      const controller = new AbortController();
+      void fleeFromNearestHostile(
+        8,
+        { bot, config, signal: controller.signal, emitEvent, recentEvents: [], stopCurrent: interruptCurrent },
+        1
+      )
+        .then(
+          (result: ToolResult) => emitEvent("keep_away", { result: result.detail }),
+          (error: unknown) => emitEvent("keep_away", { result: `keep_away failed: ${normalizeError(error)}` })
+        )
+        .then(() => {
+          keepAwayRunning = false;
+          nextKeepAwayAt = Date.now() + 5000;
+        });
     }
 
     const timeOfDay = bot.time?.timeOfDay ?? 0;

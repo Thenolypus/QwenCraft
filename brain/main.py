@@ -72,7 +72,7 @@ def should_interrupt(tool: str, event: str, data: dict[str, Any] | None = None) 
         return False
     if event == "damage_taken":
         health = (data or {}).get("health")
-        return isinstance(health, (int, float)) and health < 8
+        return isinstance(health, (int, float)) and health < 12
     return True
 
 

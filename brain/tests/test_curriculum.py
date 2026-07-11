@@ -50,6 +50,7 @@ def test_curriculum_advances_through_satisfied_predicates():
                 "spruce_log": 2,
                 "wooden_pickaxe": 1,
                 "stone_pickaxe": 1,
+                "bread": 3,
                 "furnace": 1,
                 "coal": 1,
             },
@@ -57,8 +58,26 @@ def test_curriculum_advances_through_satisfied_predicates():
         )
     )
 
-    assert status.satisfied == ["first_wood", "wooden_pickaxe", "stone_tools", "sheltered", "furnace_and_fuel"]
+    assert status.satisfied == ["first_wood", "wooden_pickaxe", "stone_tools", "sheltered", "first_food", "furnace_and_fuel"]
     assert status.stage == "iron_ingot"
+
+
+def test_curriculum_prioritizes_food_after_shelter_before_iron():
+    status = curriculum_status(
+        observation(
+            {
+                "spruce_log": 2,
+                "wooden_pickaxe": 1,
+                "stone_pickaxe": 1,
+                "furnace": 1,
+                "coal": 1,
+            },
+            {"shelter": "[0,64,0]"},
+        )
+    )
+
+    assert status.stage == "first_food"
+    assert "hunt animals or harvest crops" in status.hint
 
 
 def test_curriculum_detects_iron_gear_and_food_buffer():

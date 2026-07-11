@@ -119,6 +119,19 @@ async function resolveCraft(itemName: string, neededCount: number, depth: number
   const best = bestMissingRecipeCandidate(bot, allRecipes, neededCount);
   if (!best) return resolveFail(itemName, `no recipe available for ${itemName}`);
 
+  // craftTool only uses a table that is already nearby or in inventory; a
+  // table-only recipe must obtain one first, same as the smelt route's furnace.
+  // Resolve it before computing missing materials — crafting the table itself
+  // consumes planks the recipe may also need.
+  if (best.requiresTable) {
+    const hasTable =
+      findBlockMatching(bot, (block: any) => block.name === "crafting_table", 16, 1).length > 0 || itemCount(bot, "crafting_table") > 0;
+    if (!hasTable) {
+      const tableResult = await resolve("crafting_table", 1, depth + 1, state);
+      if (!tableResult.ok) return needFail("crafting_table", tableResult);
+    }
+  }
+
   const missing = missingMaterialsForRecipe(bot, best.recipe, neededCount);
   for (const [material, materialCount] of Object.entries(missing)) {
     const result = await resolve(material, materialCount, depth + 1, state);
@@ -223,8 +236,19 @@ async function resolve(itemName: string, neededCount: number, depth: number, sta
   try {
     const route = determineRoute(bot, itemName, state.data);
     switch (route) {
-      case "craft":
-        return await resolveCraft(itemName, neededCount, depth, state);
+      case "craft": {
+        const crafted = await resolveCraft(itemName, neededCount, depth, state);
+        if (crafted.ok) return crafted;
+        // Recipe routes can dead-end on storage-block cycles (wheat <-> hay_block)
+        // or unobtainable inputs; when the item also exists as a mineable block,
+        // probe that before giving up. On a double failure keep the craft report:
+        // it carries the prerequisite chain.
+        if (state.data.mapName[itemName]?.length || blockDefinition(bot, itemName)) {
+          const mined = await resolveMine(itemName, neededCount, depth, state);
+          if (mined.ok) return mined;
+        }
+        return crafted;
+      }
       case "mine":
         return await resolveMine(itemName, neededCount, depth, state);
       case "smelt":

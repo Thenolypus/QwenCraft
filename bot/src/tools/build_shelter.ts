@@ -1,6 +1,6 @@
 import { Vec3 } from "vec3";
 import { ToolContext, ToolResult } from "../types";
-import { findAnyInventoryItem, findInventoryItem } from "../utils";
+import { findAnyInventoryItem, findInventoryItem, itemCount } from "../utils";
 import { placeHeldAt, resultFromError, shelterDetail } from "./helpers";
 
 async function placeMaterial(context: ToolContext, target: Vec3): Promise<boolean> {
@@ -24,6 +24,19 @@ async function dirtBox(context: ToolContext): Promise<ToolResult> {
         targets.push(base.offset(x, 1, z));
       }
     }
+  }
+  // Fail fast with the exact shortfall instead of burning material on a
+  // half-built box that gives no cover and no way to finish.
+  const unfilled = targets.filter((target) => {
+    const existing = context.bot.blockAt(target);
+    return !existing || existing.name === "air" || existing.boundingBox === "empty";
+  });
+  const available = itemCount(context.bot, "dirt") + itemCount(context.bot, "cobblestone");
+  if (available < unfilled.length) {
+    return {
+      status: "failed",
+      detail: `build_shelter failed: dirt_box needs ${unfilled.length} blocks (dirt/cobblestone), have ${available}; gather more or use style=dig_in`
+    };
   }
   for (const target of targets) {
     if (!(await placeMaterial(context, target))) {

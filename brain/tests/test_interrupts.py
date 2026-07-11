@@ -32,9 +32,10 @@ def test_shelter_and_sleep_survive_sunset_and_hostile_reemissions():
 
 def test_damage_taken_interrupts_only_below_health_threshold():
     assert not should_interrupt("mine_block", "damage_taken", {"health": 15})
-    assert not should_interrupt("mine_block", "damage_taken", {"health": 8})
+    assert not should_interrupt("mine_block", "damage_taken", {"health": 12})
     assert not should_interrupt("mine_block", "damage_taken", {})
-    assert should_interrupt("mine_block", "damage_taken", {"health": 7.9})
+    assert should_interrupt("mine_block", "damage_taken", {"health": 11.9})
+    assert should_interrupt("mine_block", "damage_taken", {"health": 8})
 
 
 def test_damage_taken_does_not_cancel_active_attack():

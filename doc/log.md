@@ -233,3 +233,68 @@ Fixes: bot `interruptible()` now calls `collectBlock.cancelTask()` and drains ab
 Landed v2.2 decision records (`logs/decisions_*.jsonl` + `eval/export_sft.py`, byte-identical prompt re-render incl. injected extras), v2.3 `obtain_item` (recursive resolver on minecraft-data 1.21 + vendored Odyssey func/pre_collect/map_name/pre_smelt — minecraft-data ships no smelting data, goals.md corrected; whitelist bypass for resolver-targeted mining; 600s budget both sides), v2.4 failure critic (one-shot DEPS explanation → next prompt, lesson → longterm) and knowledge/experience memory split (100/100 caps, category eviction, transparent migration).
 Verified: `npm run build`, `npm test` (19), `uv run pytest` (74), py_compile. Not live-verified: heap_mb flatness across forced mine_block timeouts, obtain_item chains on a real server, critic quality with the real LLM.
 Next: run a live episode — watch `heap_mb` and `tool abort drain timed out` lines, look for BLOCKED/CRITIC lines in prompts, and export the episode's decisions JSONL as the first SFT sample.
+
+## [2026-07-09] fix | Wheat unobtainable: crop routing, craft→mine fallback, food priority
+obtain_item(wheat) always failed: no "wheat" entry in odyssey func.json, so the
+route fell through to wheat's only recipe (hay_block → 9 wheat), and hay_block
+crafts from 9 wheat → cycle detected. Whitelist was a red herring (resolver
+bypasses it). Added crop entries (wheat/carrot/potato/beetroot/sweet_berries)
+to func/map_name, a craft→mine fallback in resolve(), and a mature-crop age
+filter in mine_block (immature crops drop seeds only). Brain: new hard rule to
+explore for food in daylight when hungry with none in view, plus a first_food
+milestone (3 food) after sheltered. Tests cover the cycle fallback and immature
+crops. Next: live episode next to the wheat farm to confirm end-to-end.
+
+## [2026-07-09] fix | Crop harvesting: direct dig + replant instead of collectblock
+Live run showed mine_block(wheat) collecting 1 crop then "Took to long to decide
+path to goal!": collectblock's stand-adjacent goal is too strict for dense farms
+under the 2s pathfinder think budget, and progress mostly came from farmland
+trampling. Crops now use a dedicated path in mine_block: GoalNear(1), direct
+bot.dig (instant break, drops land at feet), then best-effort replant of the
+matching seed on the farmland; sweet berry bushes use activateBlock so the bush
+survives. New mine_block.test.ts covers dig+replant, no-seed, and berry cases.
+Next: watch a live harvest for pickup reliability and replant success rate.
+
+## [2026-07-09] fix | OOM crash: collectblock path never had the pathfinder heap budget
+Live OOM (62MB -> 4GB, SIGABRT) right after mine_block(stone) under phantom
+attack. Root cause: the v1 heap fix (thinkTimeout 2000/searchRadius 48) lives in
+configureMovements, which only gotoNear-based tools call; mine_block's
+collectblock path ran on pathfinder defaults (thinkTimeout 5000, searchRadius
+-1 unbounded) and collectblock swaps in its own default Movements per collect.
+mine_block now applies configureMovements and hands collectblock the budgeted
+movements before mining. Combat-reaction gaps (damage interrupt <8hp, flee(10)
+death spiral, idle-during-LLM-think) diagnosed, fixes pending decision.
+
+## [2026-07-09] fix | Combat survival: earlier interrupts, flee-to-safety, idle keep-away, shelter preflight
+Live runs showed 2-3 free hits before the brain reacted, then a flee(10) ->
+LLM-think -> get-hit death spiral. Four changes: damage_taken now interrupts
+below 12hp (was 8); flee hops repeatedly (up to 3) until no hostile within 12
+blocks instead of one fixed hop; a new idle-only keep-away reflex steps 8 blocks
+from any hostile within 4 while the planner is deciding (never fights a running
+tool, 5s throttle, emits keep_away); build_shelter dirt_box preflights material
+(needs up to 25 blocks) and fails fast with the shortfall + dig_in hint instead
+of half-building. Tests: flee hop budget/safety, shelter preflight, interrupt
+threshold. Next: live night episode to check the spiral is broken and keep_away
+does not thrash with the planner.
+
+## [2026-07-09] fix | Second mine_block OOM: adaptive search radius + heap watchdog
+Same OOM recurred WITH the movements budget applied, no interrupts involved:
+mine_block(stone,16) barehanded at stone level, 67MB -> 4GB in <1min. Mechanism:
+each 2s dig-A* at radius 48 saturates ~0.5GB of nodes when every neighbor is
+diggable; fired back-to-back per candidate they outpace 3s mark-compact GC and
+the loop starves. mine_block now caps thinkTimeout at 1s and sizes searchRadius
+per target (distance+8, max 48). Added heap watchdog in index.ts: >1GB logs
+"heap pressure" + aborts tool/search/collect; >2GB exits(3) cleanly instead of
+SIGABRT. If pressure lines ever appear, they name the tool — that is the
+diagnostic breadcrumb. Also confirmed dirt_box preflight + dig_in fallback
+worked as designed in this episode.
+
+## [2026-07-09] fix | obtain_item: resolve crafting_table as a prerequisite
+Live run: obtain_item(wooden_pickaxe) failed "no crafting_table nearby" despite
+having planks — resolveCraft resolved recipe materials but treated the table as
+craftTool's problem, and craftTool only uses a table already nearby/in inventory.
+Now a table-only recipe resolves crafting_table first (mirrors the smelt route's
+furnace step), ordered before the missing-materials computation since crafting
+the table consumes 4 planks the recipe may also need. Test mock upgraded to
+table-aware recipes + real Vec3 positions; new test covers the full chain
+(craft table -> place -> craft pickaxe).

@@ -286,5 +286,29 @@ setInterval(() => {
   });
 }, 10_000).unref();
 
+// Runaway pathfinder searches can outpace GC and end in an opaque SIGABRT at
+// the 4GB limit. Above the soft limit, kill whatever is allocating (current
+// tool, path search, collect task) and log the context; past the hard limit,
+// exit deliberately while a clean log line is still possible — the brain
+// already handles the dropped connection.
+const HEAP_SOFT_LIMIT_MB = 1024;
+const HEAP_HARD_LIMIT_MB = 2048;
+let lastHeapAbortAt = 0;
+setInterval(() => {
+  const heapMb = process.memoryUsage().heapUsed / 1024 / 1024;
+  if (heapMb < HEAP_SOFT_LIMIT_MB) return;
+  logInfo("heap pressure", { heap_mb: Math.round(heapMb), tool: currentToolSummary(), pos: positionString() });
+  const now = Date.now();
+  if (now - lastHeapAbortAt > 5000) {
+    lastHeapAbortAt = now;
+    stopCurrent("heap pressure");
+    bot.collectBlock?.cancelTask?.();
+  }
+  if (heapMb > HEAP_HARD_LIMIT_MB) {
+    logError("heap hard limit exceeded; exiting before OOM", new Error(`heapUsed ${Math.round(heapMb)}MB`));
+    process.exit(3);
+  }
+}, 2000).unref();
+
 logInfo("websocket listening", { url: `ws://127.0.0.1:${config.ws_port}` });
 logInfo("run", { id: crypto.randomUUID() });

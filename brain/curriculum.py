@@ -60,8 +60,16 @@ def has_furnace_and_fuel(observation: Observation) -> bool:
     return has_furnace and has_fuel
 
 
+def food_count(observation: Observation) -> int:
+    return sum(count for name, count in observation.inventory.items.items() if name in FOOD_ITEMS)
+
+
+def has_first_food(observation: Observation) -> bool:
+    return food_count(observation) >= 3
+
+
 def has_food_buffer(observation: Observation) -> bool:
-    return sum(count for name, count in observation.inventory.items.items() if name in FOOD_ITEMS) >= 8
+    return food_count(observation) >= 8
 
 
 MILESTONES = [
@@ -69,6 +77,7 @@ MILESTONES = [
     Milestone("wooden_pickaxe", "craft a wooden pickaxe", lambda obs: item_count(obs, "wooden_pickaxe") >= 1),
     Milestone("stone_tools", "craft a stone pickaxe", lambda obs: item_count(obs, "stone_pickaxe") >= 1),
     Milestone("sheltered", "build or pin a shelter", has_shelter),
+    Milestone("first_food", "stock at least 3 food items (hunt animals or harvest crops)", has_first_food),
     Milestone("furnace_and_fuel", "secure a furnace with coal or charcoal", has_furnace_and_fuel),
     Milestone("iron_ingot", "smelt or collect an iron ingot", lambda obs: item_count(obs, "iron_ingot") >= 1),
     Milestone(
