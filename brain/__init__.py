@@ -1,2 +1,0 @@
-"""QwenCraft Python brain package."""
-
